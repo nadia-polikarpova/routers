@@ -1,30 +1,37 @@
 use egg::{rewrite as rw, *};
 
-use crate::named::Lambda;
+use crate::named::{Lambda, var_symbol};
 use fxhash::FxHashMap as HashMap;
 use fxhash::FxHashSet as HashSet;
 
 define_language! {
+    /// A language if CBSI combinators from
+    /// Liang, Jordan, Klein. "Learning Programs: A Hierarchical Bayesian Approach. ICML 2010"
     enum Comb {
         Num(i32),
-        "+" = Plus,
-
         "I" = I, // identity
         "C" = C, // route left
         "B" = B, // route right
         "S" = S,  // route both
         "." = Nil, // empty list of routers
         ":" = Cons([Id; 2]), // non-empty list of routers
-
         "$" = App([Id; 3]), // first child is a list of routers, second is the function, third is the argument
-
-        Add(i32), // partially applied plus, used during constant folding
-
         Symbol(egg::Symbol),
+        Add(i32), // partially applied plus, used during constant folding
     }
 }
 
-// Convert a list of routers into a combinator expression added to the given expression
+impl Comb {
+    pub fn is_plus(&self) -> bool {
+        match self {
+            Comb::Symbol(s) => s == &egg::Symbol::from("+"),
+            _ => false,
+        }
+    }
+}
+
+
+/// Convert a list of routers into a combinator expression added to the given expression
 fn add_routers(expr: &mut RecExpr<Comb>, routers: &[Comb]) -> Id {
     let mut current = expr.add(Comb::Nil);
 
@@ -64,10 +71,6 @@ fn add_application(
     }
     let r_id = add_routers(expr, &routers);
     expr.add(Comb::App([r_id, mapping[&left], mapping[&right]]))
-}
-
-fn var_symbol(expr: &RecExpr<Lambda>, var_id: Id) -> egg::Symbol {
-    expr[var_id].symbol()
 }
 
 // Convert a lambda expression into a combinator expression
@@ -119,7 +122,6 @@ fn from_rec_lambda_expr(expr: &RecExpr<Lambda>) -> RecExpr<Comb> {
     for (id, node) in expr.as_ref().iter().enumerate() {
         let new_id = match node {
             Lambda::Num(n) => res.add(Comb::Num(*n)),
-            Lambda::Plus => res.add(Comb::Plus),
             Lambda::Symbol(s) => res.add(Comb::Symbol(*s)),
             Lambda::Var(_) => res.add(Comb::I),
             Lambda::Lambda([_, body]) => mapping[&usize::from(*body)], // skip lambdas, but map them to the translation of their body, in case they are referenced by some application or let
@@ -162,9 +164,10 @@ type EGraph = egg::EGraph<Comb, CombAnalysis>;
 fn eval(egraph: &EGraph, enode: &Comb) -> Option<Comb> {
     let x = |i: &Id| egraph[*i].data.constant.as_ref();
     match enode {
-        Comb::Num(_) | Comb::Plus => Some(enode.clone()),
+        Comb::Num(_) => Some(enode.clone()),
+        _ if enode.is_plus() => Some(enode.clone()),
         Comb::App([_, l, r]) => match (x(l)?, x(r)?) {
-            (Comb::Plus, Comb::Num(n)) => Some(Comb::Add(*n)),
+            (l_const, Comb::Num(n)) if l_const.is_plus() => Some(Comb::Add(*n)),
             (Comb::Add(n), Comb::Num(m)) => Some(Comb::Num(n + m)),
             _ => None,
         },
@@ -326,32 +329,6 @@ egg::test_fn! {
         ($ (: C .) ($ (: B .) + I) 1))" // compose inc inc
     =>
     "($ (: C .) ($ (: B .) + I) 2)", // x -> x + 2
-}
-
-egg::test_fn! {
-    compose_no_let_20, rules(),
-    "($ . ($ . ($ (: C (: B (: B .))) I ($ (: C (: B .)) I I)) ($ (: C .) ($ (: B .) + I) 1))
-        ($ . ($ . ($ (: C (: B (: B .))) I ($ (: C (: B .)) I I)) ($ (: C .) ($ (: B .) + I) 1))
-            ($ . ($ . ($ (: C (: B (: B .))) I ($ (: C (: B .)) I I)) ($ (: C .) ($ (: B .) + I) 1))
-                ($ . ($ . ($ (: C (: B (: B .))) I ($ (: C (: B .)) I I)) ($ (: C .) ($ (: B .) + I) 1))
-                    ($ . ($ . ($ (: C (: B (: B .))) I ($ (: C (: B .)) I I)) ($ (: C .) ($ (: B .) + I) 1))
-                        ($ . ($ . ($ (: C (: B (: B .))) I ($ (: C (: B .)) I I)) ($ (: C .) ($ (: B .) + I) 1))
-                            ($ . ($ . ($ (: C (: B (: B .))) I ($ (: C (: B .)) I I)) ($ (: C .) ($ (: B .) + I) 1))
-                                ($ . ($ . ($ (: C (: B (: B .))) I ($ (: C (: B .)) I I)) ($ (: C .) ($ (: B .) + I) 1))
-                                    ($ . ($ . ($ (: C (: B (: B .))) I ($ (: C (: B .)) I I)) ($ (: C .) ($ (: B .) + I) 1))
-                                        ($ . ($ . ($ (: C (: B (: B .))) I ($ (: C (: B .)) I I)) ($ (: C .) ($ (: B .) + I) 1))
-                                            ($ . ($ . ($ (: C (: B (: B .))) I ($ (: C (: B .)) I I)) ($ (: C .) ($ (: B .) + I) 1))
-                                                ($ . ($ . ($ (: C (: B (: B .))) I ($ (: C (: B .)) I I)) ($ (: C .) ($ (: B .) + I) 1))
-                                                    ($ . ($ . ($ (: C (: B (: B .))) I ($ (: C (: B .)) I I)) ($ (: C .) ($ (: B .) + I) 1))
-                                                        ($ . ($ . ($ (: C (: B (: B .))) I ($ (: C (: B .)) I I)) ($ (: C .) ($ (: B .) + I) 1))
-                                                            ($ . ($ . ($ (: C (: B (: B .))) I ($ (: C (: B .)) I I)) ($ (: C .) ($ (: B .) + I) 1))
-                                                                ($ . ($ . ($ (: C (: B (: B .))) I ($ (: C (: B .)) I I)) ($ (: C .) ($ (: B .) + I) 1))
-                                                                    ($ . ($ . ($ (: C (: B (: B .))) I ($ (: C (: B .)) I I)) ($ (: C .) ($ (: B .) + I) 1))
-                                                                        ($ . ($ . ($ (: C (: B (: B .))) I ($ (: C (: B .)) I I)) ($ (: C .) ($ (: B .) + I) 1))
-                                                                            ($ . ($ . ($ (: C (: B (: B .))) I ($ (: C (: B .)) I I)) ($ (: C .) ($ (: B .) + I) 1))
-                                                                                ($ (: C .) ($ (: B .) + I) 1))))))))))))))))))))" // compose inc ... (compose inc inc)
-    =>
-    "($ (: C .) ($ (: B .) + I) 20)", // x -> x + 20
 }
 
 #[test]

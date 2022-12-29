@@ -2,20 +2,17 @@ use egg::{rewrite as rw, *};
 use fxhash::FxHashSet as HashSet;
 
 define_language! {
+    /// Regular named lambda calculus with integers and addition
+    /// (mostly stolen from egg's tests, but addition is not built-in)
     pub enum Lambda {
         Num(i32),
-
         "var" = Var(Id),
-
-        "+" = Plus,
-
+        // "+" = Plus,
         "$" = App([Id; 2]),
         "lam" = Lambda([Id; 2]),
         "let" = Let([Id; 3]),
-
-        Add(i32), // partially applied plus, used during constant folding
-
-        Symbol(egg::Symbol),
+        Symbol(egg::Symbol), // everything else, including +
+        Add(i32), // partially applied plus, used only during constant folding
     }
 }
 
@@ -26,6 +23,17 @@ impl Lambda {
             _ => panic!("not a symbol"),
         }
     }
+
+    pub fn is_plus(&self) -> bool {
+        match self {
+            Lambda::Symbol(s) => s == &egg::Symbol::from("+"),
+            _ => false,
+        }
+    }
+}
+
+pub fn var_symbol(expr: &RecExpr<Lambda>, var_id: Id) -> egg::Symbol {
+    expr[var_id].symbol()
 }
 
 type EGraph = egg::EGraph<Lambda, LambdaAnalysis>;
@@ -42,9 +50,10 @@ struct Data {
 fn eval(egraph: &EGraph, enode: &Lambda) -> Option<Lambda> {
     let x = |i: &Id| egraph[*i].data.constant.as_ref();
     match enode {
-        Lambda::Num(_) | Lambda::Plus => Some(enode.clone()),
+        Lambda::Num(_) => Some(enode.clone()),
+        _ if enode.is_plus() => Some(enode.clone()),
         Lambda::App([l, r]) => match (x(l)?, x(r)?) {
-            (Lambda::Plus, Lambda::Num(n)) => Some(Lambda::Add(*n)),
+            (l_const, Lambda::Num(n)) if l_const.is_plus() => Some(Lambda::Add(*n)),
             (Lambda::Add(n), Lambda::Num(m)) => Some(Lambda::Num(n + m)),
             _ => None,
         },
@@ -196,32 +205,6 @@ egg::test_fn! {
                                                                             ($ ($ (var compose) (var add1))
                                                                                 ($ ($ (var compose) (var add1))
                                                                                         (var add1))))))))))))))))))))))"
-  =>
-  "(lam ?x ($ ($ + (var ?x)) 20))"
-}
-
-egg::test_fn! {
-  lambda_compose_many_no_let, rules(),
-  "($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
-        ($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
-            ($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
-                ($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
-                    ($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
-                            ($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
-                                ($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
-                                    ($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
-                                        ($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
-                                            ($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
-                                                ($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
-                                                    ($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
-                                                        ($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
-                                                            ($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
-                                                                ($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
-                                                                    ($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
-                                                                        ($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
-                                                                            ($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
-                                                                                ($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
-                                                                                        (lam y ($ ($ + (var y)) 1)))))))))))))))))))))"
   =>
   "(lam ?x ($ ($ + (var ?x)) 20))"
 }
