@@ -177,7 +177,7 @@ impl Applier<Lambda, LambdaAnalysis> for CaptureAvoid {
 /// Function composition and increment nested 20 times.
 pub static COMPOSE_20_LAM: &str =
     "(let compose (lam f (lam g (lam x ($ (var f) ($ (var g) (var x))))))
-     (let add1 (lam y ($ ($ + (var y)) 1))
+     (let add1 (lam x ($ ($ + (var x)) 1))
         ($ ($ (var compose) (var add1))
         ($ ($ (var compose) (var add1))
         ($ ($ (var compose) (var add1))
