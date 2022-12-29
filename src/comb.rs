@@ -7,7 +7,7 @@ use fxhash::FxHashSet as HashSet;
 define_language! {
     /// A language if CBSI combinators from
     /// Liang, Jordan, Klein. "Learning Programs: A Hierarchical Bayesian Approach. ICML 2010"
-    enum Comb {
+    pub enum Comb {
         Num(i32),
         "I" = I, // identity
         "C" = C, // route left
@@ -42,42 +42,43 @@ fn add_routers(expr: &mut RecExpr<Comb>, routers: &[Comb]) -> Id {
     current
 }
 
-/// Helper function for converting a named lambda calculus expression into a combinator expression;
-/// this function adds an application with appropriate routers
-fn add_application(
-    expr: &mut RecExpr<Comb>, // combinator expression under construction
-    parent: usize,            // index of current application node in named expression
-    left: usize,              // index of left child in named expression
-    right: usize,             // index of right child in named expression
-    free_vars: &Vec<HashSet<egg::Symbol>>, // index of free variables in named expression
-    var_bindings: &HashMap<egg::Symbol, usize>, // index of variable bindings in named expression
-    mapping: &HashMap<usize, Id>, // mapping from named expression indices to combinator expression indices
-) -> Id {
-    // order my own free variables by the order in which they are bound:
-    let mut ordered_vars = free_vars[parent].iter().collect::<Vec<_>>();
-    ordered_vars.sort_unstable_by_key(|var_id| std::cmp::Reverse(var_bindings[var_id]));
-
-    // compute the router for each variable based on which children contain it free:
+/// Convert a combinator expression that represents a list of routers into a vector of routers
+/// (this is the inverse of add_routers)
+fn get_routers(expr: &RecExpr<Comb>, routers_id: Id) -> Vec<Comb> {
     let mut routers = vec![];
-    for var_id in ordered_vars {
-        let left_contains = free_vars[left].contains(var_id);
-        let right_contains = free_vars[right].contains(var_id);
-        if left_contains && right_contains {
-            routers.push(Comb::S);
-        } else if left_contains {
-            routers.push(Comb::C);
-        } else if right_contains {
-            routers.push(Comb::B);
+    let mut current = routers_id;
+    while let Comb::Cons([lhs, rhs]) = &expr[current] {
+        routers.push(expr[*lhs].clone());
+        current = *rhs;
+    }
+    routers
+}
+
+/// Partition a list of variables into a left and right lists accoridng to the routers
+fn route_vars(vars: &[egg::Symbol], routers: &[Comb]) -> (Vec<egg::Symbol>, Vec<egg::Symbol>) {
+    assert!(routers.len() >= vars.len()); // all variables must be routed
+    let mut left_vars = vec![];
+    let mut right_vars = vec![];
+    for (router, var) in routers.iter().zip(vars.iter()) {
+        match router {
+            Comb::C => {
+                left_vars.push(*var);
+            }
+            Comb::B => {
+                right_vars.push(*var);
+            }
+            Comb::S => {
+                left_vars.push(*var);
+                right_vars.push(*var);
+            }
+            _ => panic!("not a router"),
         }
     }
-
-    // add the routers and then the application
-    let r_id = add_routers(expr, &routers);
-    expr.add(Comb::App([r_id, mapping[&left], mapping[&right]]))
+    (left_vars, right_vars)
 }
 
 /// Convert a lambda expression into a combinator expression
-fn from_rec_lambda_expr(expr: &RecExpr<Lambda>) -> RecExpr<Comb> {
+pub fn from_lambda_expr(expr: &RecExpr<Lambda>) -> RecExpr<Comb> {
     // First pass: compute the set of free variables for every node and remember where each variable is bound
     let mut free_vars = vec![HashSet::default(); expr.as_ref().len()];
     let mut var_bindings = HashMap::default();
@@ -148,6 +149,134 @@ fn from_rec_lambda_expr(expr: &RecExpr<Lambda>) -> RecExpr<Comb> {
     }
 
     res
+}
+
+/// Helper function for converting a named lambda calculus expression into a combinator expression;
+/// this function adds an application with appropriate routers
+fn add_application(
+    expr: &mut RecExpr<Comb>, // combinator expression under construction
+    parent: usize,            // index of current application node in named expression
+    left: usize,              // index of left child in named expression
+    right: usize,             // index of right child in named expression
+    free_vars: &Vec<HashSet<egg::Symbol>>, // index of free variables in named expression
+    var_bindings: &HashMap<egg::Symbol, usize>, // index of variable bindings in named expression
+    mapping: &HashMap<usize, Id>, // mapping from named expression indices to combinator expression indices
+) -> Id {
+    // order my own free variables by the order in which they are bound:
+    let mut ordered_vars = free_vars[parent].iter().collect::<Vec<_>>();
+    ordered_vars.sort_unstable_by_key(|var_id| std::cmp::Reverse(var_bindings[var_id]));
+
+    // compute the router for each variable based on which children contain it free:
+    let mut routers = vec![];
+    for var_id in ordered_vars {
+        let left_contains = free_vars[left].contains(var_id);
+        let right_contains = free_vars[right].contains(var_id);
+        if left_contains && right_contains {
+            routers.push(Comb::S);
+        } else if left_contains {
+            routers.push(Comb::C);
+        } else if right_contains {
+            routers.push(Comb::B);
+        }
+    }
+
+    // add the routers and then the application
+    let r_id = add_routers(expr, &routers);
+    expr.add(Comb::App([r_id, mapping[&left], mapping[&right]]))
+}
+
+/// Convert a combinator expression into a lambda expression
+pub fn to_lambda_expr(expr: &RecExpr<Comb>) -> RecExpr<Lambda> {
+    // First pass: compute a mapping from I-nodes to variables and from "abstraction" nodes to variables they bind
+    let mut var_mapping = HashMap::default();
+    let mut total_vars = 0;
+    compute_vars(
+        expr,
+        &mut var_mapping,
+        &mut total_vars,
+        &vec![],
+        Id::from(expr.as_ref().len() - 1),
+    );
+
+    println!("expr: {:?}", expr);
+    println!("var_mapping: {:?}", var_mapping);
+
+    // Second pass: gradually add nodes to the lambda expression translating:
+    // - I-nodes to variables according to var_mapping
+    // - applications to either applications or lambdas, also according to var_mapping
+    let mut res = RecExpr::default();
+    let mut mapping = HashMap::default(); // maps from combinator node id to lambda node id
+    for (id, node) in expr.as_ref().iter().enumerate() {
+        let new_id = match node {
+            Comb::Num(n) => res.add(Lambda::Num(*n)),
+            Comb::Symbol(s) => res.add(Lambda::Symbol(*s)),
+            Comb::I => {
+                println!("accessing var_mapping[{:?}]", Id::from(id));
+                let vars = &var_mapping[&Id::from(id)];
+                assert!(vars.len() == 1);
+                let s_id = res.add(Lambda::Symbol(vars[0]));
+                res.add(Lambda::Var(s_id))
+            }
+            Comb::App([_, l, r]) => {
+                println!("accessing var_mapping[{:?}]", Id::from(id));
+                let vars = &var_mapping[&Id::from(id)];
+                let body_id = res.add(Lambda::App([mapping[l], mapping[r]]));
+                // Create a lambda for each variable that is not bound here:
+                let mut res_id = body_id;
+                for var in vars.iter().rev() {
+                    let s_id = res.add(Lambda::Symbol(*var));
+                    res_id = res.add(Lambda::Lambda([s_id, res_id]));
+                }
+                res_id
+            }
+            Comb::B | Comb::C | Comb::S | Comb::Nil | Comb::Cons(_) => Id::from(0), // skip those nodes, we already took care of them in the first pass
+            Comb::Add(_) => unreachable!("Add cannot occur in surface language"),
+        };
+        mapping.insert(Id::from(id), new_id);
+    }
+    res
+}
+
+fn compute_vars(
+    expr: &RecExpr<Comb>,
+    var_mapping: &mut HashMap<Id, Vec<egg::Symbol>>,
+    total_vars: &mut usize,
+    vars: &Vec<egg::Symbol>,
+    id: Id,
+) {
+    let node = &expr[id];
+    match node {
+        Comb::I => {
+            assert!(vars.len() == 1);
+            let var = vars[0];
+            var_mapping.insert(id, vec![var]);
+        }
+        Comb::App([route, l, r]) => {
+            let routers = get_routers(expr, *route);
+            assert!(routers.len() >= vars.len()); // at least we have routers for all variables that are already bound!
+            if routers.len() == vars.len() {
+                // no new variables are bound
+                var_mapping.insert(id, vec![]);
+                let (l_vars, r_vars) = route_vars(vars, &routers);
+                compute_vars(expr, var_mapping, total_vars, &l_vars, *l);
+                compute_vars(expr, var_mapping, total_vars, &r_vars, *r);
+            } else {
+                // new variables are bound
+                let mut new_vars = vec![];
+                for _ in routers[vars.len()..].iter() {
+                    let var = egg::Symbol::from(format!("x{}", total_vars));
+                    *total_vars += 1;
+                    new_vars.push(var);
+                }
+                let all_vars = [&vars[..], &new_vars[..]].concat();
+                var_mapping.insert(id, new_vars);
+                let (l_vars, r_vars) = route_vars(&all_vars, &routers);
+                compute_vars(expr, var_mapping, total_vars, &l_vars, *l);
+                compute_vars(expr, var_mapping, total_vars, &r_vars, *r);
+            }
+        }
+        _ => (),
+    }
 }
 
 /// Constant folding for combinator expressions
@@ -243,7 +372,7 @@ static COMPOSE_20_COMB: &str = "($ . ($ (: C .)
 #[test]
 pub fn conversion_inc() {
     let lambda_expr: RecExpr<Lambda> = "(lam y ($ ($ + (var y)) 1))".parse().unwrap();
-    let comb_expr = from_rec_lambda_expr(&lambda_expr);
+    let comb_expr = from_lambda_expr(&lambda_expr);
     assert!(format!("{}", comb_expr) == "($ (: C .) ($ (: B .) + I) 1)");
     println!("{}", comb_expr.pretty(80));
 }
@@ -253,7 +382,7 @@ pub fn conversion_compose() {
     let lambda_expr: RecExpr<Lambda> = "(lam f (lam g (lam x ($ (var f) ($ (var g) (var x))))))"
         .parse()
         .unwrap();
-    let comb_expr = from_rec_lambda_expr(&lambda_expr);
+    let comb_expr = from_lambda_expr(&lambda_expr);
     assert!(format!("{}", comb_expr) == "($ (: C (: B (: B .))) I ($ (: C (: B .)) I I))");
     println!("{}", comb_expr.pretty(80));
 }
@@ -263,7 +392,7 @@ pub fn conversion_let() {
     let lambda_expr: RecExpr<Lambda> = "(let x 1 (lam y ($ ($ + (var y)) (var x))))"
         .parse()
         .unwrap();
-    let comb_expr = from_rec_lambda_expr(&lambda_expr);
+    let comb_expr = from_lambda_expr(&lambda_expr);
     assert!(format!("{}", comb_expr) == "($ . ($ (: B (: C .)) ($ (: B .) + I) I) 1)");
     println!("{}", comb_expr.pretty(80));
 }
@@ -276,7 +405,7 @@ pub fn conversion_let_compose() {
                                         ($ ($ (var compose) (var add1)) (var add1))))"
             .parse()
             .unwrap();
-    let comb_expr = from_rec_lambda_expr(&lambda_expr);
+    let comb_expr = from_lambda_expr(&lambda_expr);
     assert!(format!("{}", comb_expr) == "($ . ($ (: C .) ($ (: C (: S .)) ($ (: C (: B .)) I I) I) ($ (: C .) ($ (: B .) + I) 1)) ($ (: C (: B (: B .))) I ($ (: C (: B .)) I I)))");
     println!("{}", comb_expr.pretty(80));
 }
@@ -284,10 +413,54 @@ pub fn conversion_let_compose() {
 #[test]
 pub fn conversion_compose_many() {
     let lambda_expr: RecExpr<Lambda> = COMPOSE_20_LAM.parse().unwrap();
-    let comb_expr = from_rec_lambda_expr(&lambda_expr);
+    let comb_expr = from_lambda_expr(&lambda_expr);
     let comb_expr_2: RecExpr<Comb> = COMPOSE_20_COMB.parse().unwrap();
     assert!(format!("{}", comb_expr) == format!("{}", comb_expr_2));
 }
+
+#[test]
+pub fn to_lam_inc() {
+    let comb_expr: RecExpr<Comb> = "($ (: C .) ($ (: B .) + I) 1)".parse().unwrap();
+    let lambda_expr: RecExpr<Lambda> = to_lambda_expr(&comb_expr);
+    assert!(format!("{}", lambda_expr) == "(lam x0 ($ ($ + (var x0)) 1))");
+    println!("{}", lambda_expr.pretty(80));
+}
+
+#[test]
+pub fn to_lam_compose() {
+    let comb_expr: RecExpr<Comb> = "($ (: C (: B (: B .))) I ($ (: C (: B .)) I I))"
+        .parse()
+        .unwrap();
+    let lambda_expr: RecExpr<Lambda> = to_lambda_expr(&comb_expr);
+    assert!(
+        format!("{}", lambda_expr)
+            == "(lam x0 (lam x1 (lam x2 ($ (var x0) ($ (var x1) (var x2))))))"
+    );
+    println!("{}", lambda_expr.pretty(80));
+}
+
+// #[test]
+// pub fn conversion_let() {
+//     let lambda_expr: RecExpr<Lambda> = "(let x 1 (lam y ($ ($ + (var y)) (var x))))"
+//         .parse()
+//         .unwrap();
+//     let comb_expr = from_lambda_expr(&lambda_expr);
+//     assert!(format!("{}", comb_expr) == "($ . ($ (: B (: C .)) ($ (: B .) + I) I) 1)");
+//     println!("{}", comb_expr.pretty(80));
+// }
+
+// #[test]
+// pub fn conversion_let_compose() {
+//     let lambda_expr: RecExpr<Lambda> =
+//         "(let compose (lam f (lam g (lam x ($ (var f) ($ (var g) (var x))))))
+//                                         (let add1 (lam y ($ ($ + (var y)) 1))
+//                                         ($ ($ (var compose) (var add1)) (var add1))))"
+//             .parse()
+//             .unwrap();
+//     let comb_expr = from_lambda_expr(&lambda_expr);
+//     assert!(format!("{}", comb_expr) == "($ . ($ (: C .) ($ (: C (: S .)) ($ (: C (: B .)) I I) I) ($ (: C .) ($ (: B .) + I) 1)) ($ (: C (: B (: B .))) I ($ (: C (: B .)) I I)))");
+//     println!("{}", comb_expr.pretty(80));
+// }
 
 egg::test_fn! {
   assoc_under_lambda, rules(),
@@ -328,7 +501,7 @@ pub fn compose_20() {
 #[test]
 pub fn compose_20_from_lambda() {
     let lambda_expr: RecExpr<Lambda> = COMPOSE_20_LAM.parse().unwrap();
-    let source = from_rec_lambda_expr(&lambda_expr);
+    let source = from_lambda_expr(&lambda_expr);
     egg::test::test_runner(
         "compose_20_from_lambda",
         None,
