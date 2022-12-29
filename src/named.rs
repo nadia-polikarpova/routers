@@ -172,6 +172,33 @@ impl Applier<Lambda, LambdaAnalysis> for CaptureAvoid {
     }
 }
 
+///////// Tests ///////////
+
+/// Function composition and increment nested 20 times.
+pub static COMPOSE_20_LAM: &str =
+    "(let compose (lam f (lam g (lam x ($ (var f) ($ (var g) (var x))))))
+     (let add1 (lam y ($ ($ + (var y)) 1))
+        ($ ($ (var compose) (var add1))
+        ($ ($ (var compose) (var add1))
+        ($ ($ (var compose) (var add1))
+        ($ ($ (var compose) (var add1))
+        ($ ($ (var compose) (var add1))
+        ($ ($ (var compose) (var add1))
+        ($ ($ (var compose) (var add1))
+        ($ ($ (var compose) (var add1))
+        ($ ($ (var compose) (var add1))
+        ($ ($ (var compose) (var add1))
+        ($ ($ (var compose) (var add1))
+        ($ ($ (var compose) (var add1))
+        ($ ($ (var compose) (var add1))
+        ($ ($ (var compose) (var add1))
+        ($ ($ (var compose) (var add1))
+        ($ ($ (var compose) (var add1))
+        ($ ($ (var compose) (var add1))
+        ($ ($ (var compose) (var add1))
+        ($ ($ (var compose) (var add1))
+                            (var add1))))))))))))))))))))))";
+
 egg::test_fn! {
   lambda_under, rules(),
   "(lam x ($ ($ + 4)
@@ -180,31 +207,16 @@ egg::test_fn! {
   "(lam x 8))",
 }
 
-egg::test_fn! {
-  lambda_compose_many, rules(),
-  "(let compose (lam f (lam g (lam x ($ (var f)
-                                     ($ (var g) (var x))))))
-   (let add1 (lam y ($ ($ + (var y)) 1))
-   ($ ($ (var compose) (var add1))
-        ($ ($ (var compose) (var add1))
-             ($ ($ (var compose) (var add1))
-                  ($ ($ (var compose) (var add1))
-                       ($ ($ (var compose) (var add1))
-                            ($ ($ (var compose) (var add1))
-                                ($ ($ (var compose) (var add1))
-                                    ($ ($ (var compose) (var add1))
-                                        ($ ($ (var compose) (var add1))
-                                            ($ ($ (var compose) (var add1))
-                                                ($ ($ (var compose) (var add1))
-                                                    ($ ($ (var compose) (var add1))
-                                                        ($ ($ (var compose) (var add1))
-                                                            ($ ($ (var compose) (var add1))
-                                                                ($ ($ (var compose) (var add1))
-                                                                    ($ ($ (var compose) (var add1))
-                                                                        ($ ($ (var compose) (var add1))
-                                                                            ($ ($ (var compose) (var add1))
-                                                                                ($ ($ (var compose) (var add1))
-                                                                                        (var add1))))))))))))))))))))))"
-  =>
-  "(lam ?x ($ ($ + (var ?x)) 20))"
+#[test]
+pub fn lambda_compose_many() {
+    let source: RecExpr<Lambda> = COMPOSE_20_LAM.parse().unwrap();
+    egg::test::test_runner(
+        "compose_20",
+        None,
+        &(rules()),
+        source,
+        &["(lam ?x ($ ($ + (var ?x)) 20))".parse().unwrap()],
+        None,
+        true,
+    )
 }

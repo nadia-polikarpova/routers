@@ -1,6 +1,6 @@
 use egg::{rewrite as rw, *};
 
-use crate::named::{Lambda, var_symbol};
+use crate::named::{var_symbol, Lambda, COMPOSE_20_LAM};
 use fxhash::FxHashMap as HashMap;
 use fxhash::FxHashSet as HashSet;
 
@@ -30,7 +30,6 @@ impl Comb {
     }
 }
 
-
 /// Convert a list of routers into a combinator expression added to the given expression
 fn add_routers(expr: &mut RecExpr<Comb>, routers: &[Comb]) -> Id {
     let mut current = expr.add(Comb::Nil);
@@ -43,20 +42,22 @@ fn add_routers(expr: &mut RecExpr<Comb>, routers: &[Comb]) -> Id {
     current
 }
 
+/// Helper function for converting a named lambda calculus expression into a combinator expression;
+/// this function adds an application with appropriate routers
 fn add_application(
-    expr: &mut RecExpr<Comb>,
-    parent: usize,
-    left: usize,
-    right: usize,
-    free_vars: &Vec<HashSet<egg::Symbol>>,
-    var_bindings: &HashMap<egg::Symbol, usize>,
-    mapping: &HashMap<usize, Id>,
+    expr: &mut RecExpr<Comb>, // combinator expression under construction
+    parent: usize,            // index of current application node in named expression
+    left: usize,              // index of left child in named expression
+    right: usize,             // index of right child in named expression
+    free_vars: &Vec<HashSet<egg::Symbol>>, // index of free variables in named expression
+    var_bindings: &HashMap<egg::Symbol, usize>, // index of variable bindings in named expression
+    mapping: &HashMap<usize, Id>, // mapping from named expression indices to combinator expression indices
 ) -> Id {
-    // order my own free variables by the order in which they are bound
+    // order my own free variables by the order in which they are bound:
     let mut ordered_vars = free_vars[parent].iter().collect::<Vec<_>>();
-    ordered_vars.sort_by_key(|var_id| std::cmp::Reverse(var_bindings[var_id]));
-    // println!("ordered_vars: {:?}", ordered_vars);
+    ordered_vars.sort_unstable_by_key(|var_id| std::cmp::Reverse(var_bindings[var_id]));
 
+    // compute the router for each variable based on which children contain it free:
     let mut routers = vec![];
     for var_id in ordered_vars {
         let left_contains = free_vars[left].contains(var_id);
@@ -69,11 +70,13 @@ fn add_application(
             routers.push(Comb::B);
         }
     }
+
+    // add the routers and then the application
     let r_id = add_routers(expr, &routers);
     expr.add(Comb::App([r_id, mapping[&left], mapping[&right]]))
 }
 
-// Convert a lambda expression into a combinator expression
+/// Convert a lambda expression into a combinator expression
 fn from_rec_lambda_expr(expr: &RecExpr<Lambda>) -> RecExpr<Comb> {
     // First pass: compute the set of free variables for every node and remember where each variable is bound
     let mut free_vars = vec![HashSet::default(); expr.as_ref().len()];
@@ -82,7 +85,6 @@ fn from_rec_lambda_expr(expr: &RecExpr<Lambda>) -> RecExpr<Comb> {
     for (id, node) in expr.as_ref().iter().enumerate() {
         match node {
             Lambda::Var(var_id) => {
-                // free_vars[id].insert(*var_id);
                 free_vars[id].insert(var_symbol(expr, *var_id));
             }
             Lambda::App([l, r]) => {
@@ -108,9 +110,6 @@ fn from_rec_lambda_expr(expr: &RecExpr<Lambda>) -> RecExpr<Comb> {
             _ => (),
         }
     }
-    // println!("expr: {:?}", expr);
-    // println!("free_vars: {:?}", free_vars);
-    // println!("var_bindings: {:?}", var_bindings);
 
     // Second pass: gradually add nodes to the combinator expression
     // - replacing variables with I
@@ -151,6 +150,7 @@ fn from_rec_lambda_expr(expr: &RecExpr<Lambda>) -> RecExpr<Comb> {
     res
 }
 
+/// Constant folding for combinator expressions
 #[derive(Default)]
 struct CombAnalysis;
 
@@ -161,6 +161,7 @@ struct Data {
 
 type EGraph = egg::EGraph<Comb, CombAnalysis>;
 
+/// Constant folding: same implementation as for lambda expressions
 fn eval(egraph: &EGraph, enode: &Comb) -> Option<Comb> {
     let x = |i: &Id| egraph[*i].data.constant.as_ref();
     match enode {
@@ -214,28 +215,7 @@ fn rules() -> Vec<Rewrite<Comb, CombAnalysis>> {
     ]
 }
 
-static COMPOSE_20_LAM: &str = "(let compose (lam f (lam g (lam x ($ (var f) ($ (var g) (var x))))))
-     (let add1 (lam y ($ ($ + (var y)) 1))
-        ($ ($ (var compose) (var add1))
-        ($ ($ (var compose) (var add1))
-        ($ ($ (var compose) (var add1))
-        ($ ($ (var compose) (var add1))
-        ($ ($ (var compose) (var add1))
-        ($ ($ (var compose) (var add1))
-        ($ ($ (var compose) (var add1))
-        ($ ($ (var compose) (var add1))
-        ($ ($ (var compose) (var add1))
-        ($ ($ (var compose) (var add1))
-        ($ ($ (var compose) (var add1))
-        ($ ($ (var compose) (var add1))
-        ($ ($ (var compose) (var add1))
-        ($ ($ (var compose) (var add1))
-        ($ ($ (var compose) (var add1))
-        ($ ($ (var compose) (var add1))
-        ($ ($ (var compose) (var add1))
-        ($ ($ (var compose) (var add1))
-        ($ ($ (var compose) (var add1))
-                            (var add1))))))))))))))))))))))";
+///////// Tests ///////////
 
 static COMPOSE_20_COMB: &str = "($ . ($ (: C .) 
         ($ (: S (: S .)) ($ (: C (: B .)) I I) 
@@ -258,7 +238,7 @@ static COMPOSE_20_COMB: &str = "($ . ($ (: C .)
                                                                             ($ (: S (: S .)) ($ (: C (: B .)) I I) 
                                                                             ($ (: C (: S .)) ($ (: C (: B .)) I I) I)))))))))))))))))))
             ($ (: C .) ($ (: B .) + I) 1))
-            ($ (: C (: B (: B .))) I ($ (: C (: B .)) I I)))"; // analogue of lambda example with the lets
+            ($ (: C (: B (: B .))) I ($ (: C (: B .)) I I)))";
 
 #[test]
 pub fn conversion_inc() {
