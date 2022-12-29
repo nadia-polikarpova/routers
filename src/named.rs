@@ -2,7 +2,7 @@ use egg::{rewrite as rw, *};
 use fxhash::FxHashSet as HashSet;
 
 define_language! {
-    enum Lambda {
+    pub enum Lambda {
         Num(i32),
 
         "var" = Var(Id),
@@ -16,6 +16,15 @@ define_language! {
         Add(i32), // partially applied plus, used during constant folding
 
         Symbol(egg::Symbol),
+    }
+}
+
+impl Lambda {
+    pub fn symbol(&self) -> egg::Symbol {
+        match self {
+            Lambda::Symbol(s) => *s,
+            _ => panic!("not a symbol"),
+        }
     }
 }
 
@@ -34,13 +43,11 @@ fn eval(egraph: &EGraph, enode: &Lambda) -> Option<Lambda> {
     let x = |i: &Id| egraph[*i].data.constant.as_ref();
     match enode {
         Lambda::Num(_) | Lambda::Plus => Some(enode.clone()),
-        Lambda::App([l,r]) => {
-            match (x(l)?, x(r)?) {
-                (Lambda::Plus, Lambda::Num(n)) => Some(Lambda::Add(*n)),
-                (Lambda::Add(n), Lambda::Num(m)) => Some(Lambda::Num(n + m)),
-                _ => None,
-            }
-        },        
+        Lambda::App([l, r]) => match (x(l)?, x(r)?) {
+            (Lambda::Plus, Lambda::Num(n)) => Some(Lambda::Add(*n)),
+            (Lambda::Add(n), Lambda::Num(m)) => Some(Lambda::Num(n + m)),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -104,7 +111,6 @@ fn is_const(v: Var) -> impl Fn(&mut EGraph, Id, &Subst) -> bool {
 fn rules() -> Vec<Rewrite<Lambda, LambdaAnalysis>> {
     vec![
         rw!("add-assoc"; "($ ($ + ($ ($ + ?a) ?b)) ?c)" => "($ ($ + ?a) ($ ($ + ?b) ?c))"),
-
         rw!("beta";     "($ (lam ?v ?body) ?e)" => "(let ?v ?e ?body)"),
         rw!("let-app";  "(let ?v ?e ($ ?a ?b))" => "($ (let ?v ?e ?a) (let ?v ?e ?b))"),
         rw!("let-const";
@@ -195,8 +201,8 @@ egg::test_fn! {
 }
 
 egg::test_fn! {
-    lambda_compose_many_no_let, rules(),
-    "($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
+  lambda_compose_many_no_let, rules(),
+  "($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
         ($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
             ($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
                 ($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
@@ -216,7 +222,6 @@ egg::test_fn! {
                                                                             ($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
                                                                                 ($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam y ($ ($ + (var y)) 1)))
                                                                                         (lam y ($ ($ + (var y)) 1)))))))))))))))))))))"
-    =>
-    "(lam ?x ($ ($ + (var ?x)) 20))"
-  }
-  
+  =>
+  "(lam ?x ($ ($ + (var ?x)) 20))"
+}
