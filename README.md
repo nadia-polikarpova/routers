@@ -1,4 +1,4 @@
 TODO
 
-- Translate from combinators to named
+- Why does the egraph blow up?
 - Implement generic appliers for commutativy and associativity
