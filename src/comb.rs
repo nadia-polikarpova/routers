@@ -426,7 +426,7 @@ fn ends_with_b(rts: Var) -> impl Fn(&mut EGraph, Id, &Subst) -> bool {
     }
 }
 
-/// Is an application whose parent's routers are `parent_rts` and whose left child's routers are `child_rts` a beta-redux?
+/// Is an application whose parent's routers are `parent_rts` and whose left child's routers are `child_rts` a beta-redex?
 /// Yes if the child has more routers than parent has pointing to the left.
 fn is_redex(parent_rts: Var, child_rts: Var) -> impl Fn(&mut EGraph, Id, &Subst) -> bool {
     move |egraph, _, subst| {
@@ -504,8 +504,8 @@ impl Applier<Comb, CombAnalysis> for Beta {
         let split_point = r0.iter().filter(|r| r.routes_left()).count();
         // split rl into r1 and r at the split point:
         let rl = egraph[subst[self.rl]].data.routers.as_ref().unwrap();
-        if rl.len() == split_point {
-            return vec![]; // not a redux
+        if rl.len() <= split_point {
+            return vec![]; // not a redex
         }
         // let input_pat: Pattern<Comb> = "($ ?r0 ($ ?rl ?x ?y) ?z)".parse().unwrap();
         // let before_term = show_match(egraph, subst, &input_pat);
@@ -514,7 +514,7 @@ impl Applier<Comb, CombAnalysis> for Beta {
         //            split_point, rl.len(), before_term);
         // }
         let (r1, r) = rl.split_at(split_point);
-        assert!(!r.is_empty()); // enforced by the condition `is_redux`
+        assert!(!r.is_empty()); // enforced by the condition `is_redex`
         let (core, r) = (r[0].clone(), &r[1..]); // split off the core router
         let (mut rp_new, r1_new, r2_new, pat) = self.new_routers(&core, r0, r1, r);
         rp_new.extend(r.iter().cloned()); // r is always added to the end of the parent routers
