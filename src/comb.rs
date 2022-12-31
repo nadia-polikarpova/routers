@@ -428,7 +428,7 @@ fn ends_with_b(rts: Var) -> impl Fn(&mut EGraph, Id, &Subst) -> bool {
 
 /// Is an application whose parent's routers are `parent_rts` and whose left child's routers are `child_rts` a beta-redux?
 /// Yes if the child has more routers than parent has pointing to the left.
-fn is_redux(parent_rts: Var, child_rts: Var) -> impl Fn(&mut EGraph, Id, &Subst) -> bool {
+fn is_redex(parent_rts: Var, child_rts: Var) -> impl Fn(&mut EGraph, Id, &Subst) -> bool {
     move |egraph, _, subst| {
         let n_parent_routers = egraph[subst[parent_rts]]
             .data
@@ -471,7 +471,7 @@ fn rules() -> Vec<Rewrite<Comb, CombAnalysis>> {
             beta_b: "($ ?rp_new ?x ($ ?r2_new ?y_new ?z))".parse().unwrap(),
             beta_c: "($ ?rp_new ($ ?r1_new ?x_new ?z) ?y)".parse().unwrap(),
             beta_s: "($ ?rp_new ($ ?r1_new ?x_new ?z) ($ ?r2_new ?y_new ?z))".parse().unwrap(),
-        }} if is_redux(var("?r0"), var("?rl"))),
+        }} if is_redex(var("?r0"), var("?rl"))),
     ]
 }
 
@@ -798,9 +798,6 @@ impl Beta {
     }
 
     pub fn add_adapter(egraph: &mut EGraph, adaptee: Id, m: usize, n: usize) -> Id {
-        if n == 0 {
-            return adaptee;
-        }
         let mut cur_id = adaptee;
         let i_id = egraph.add(Comb::I);
         for i in m..m + n {
