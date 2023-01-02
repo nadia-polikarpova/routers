@@ -40,7 +40,7 @@ Here `f` and `a` are some closed terms.
 
 Note something important about the `x + y` subterm:
 the order of bindings of its variables has switched as a result of this reduction
-(`x` used to the the outer binder, but now it is the inner binder; so e.g. in de Bruijn notation their indices will have to be switched).
+(`x` used to be the outer binder, but now it is the inner binder; so e.g. in de Bruijn notation their indices will have to be switched).
 
 
 Now consider the same reduction in the Routers calculus (again, `f` amd `a` are arbitrary closed terms):
