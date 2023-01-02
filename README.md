@@ -1,6 +1,6 @@
 ## Notes
 
-This is an egg implication of the *Routers* combinator calculus
+This is an egg implementation of the *Routers* combinator calculus
 described in [Liang, Jordan, Klein. "Learning Programs: A Hierarchical Bayesian Approach. ICML 2010"](https://people.eecs.berkeley.edu/~jordan/papers/liang-jordan-klein-icml10.pdf).
 
 Figures 1 and 2 in the paper give a good idea of the calculus, and Figure 5 defined beta-reduction generally.
@@ -15,8 +15,8 @@ This calculus has the following properties that make it interesting for e-graphs
 
 ### Error in the original paper
 
-The original paper has an error: in Fig. 5, which defines the beta-reduction rules). 
-Consider the first rule, beta-reduction for the B router:
+The original paper has an error: in Fig. 5, which defines the beta-reduction rules. 
+Consider the first rule, beta-reduction for the B router (other rules have the same error):
 
 - Here the routers `r` for the "inner binders" of the abstraction are moved to the top, 
   but the variables that used to be routed right (to `y`) by `r` are now stuck.
@@ -25,6 +25,81 @@ Consider the first rule, beta-reduction for the B router:
   because as far as `y` in concerned, the formal under reduction comes before the inner binders,
   but in the reduced term it is now the other way around!
   My current approach is to create an adaptor term around `y` that swaps the order of the routers, but this increases the size of the reduced term.
+
+**Example**
+
+Let us first consider the following local reduction in named lambda calculus
+(by "local" I mean that we are pushing the redex inwards towards the variables instead of doing the substitution in one step):
+
+```
+(\x y . f (x + y)) a
+--> \y . f ((\x -> x + y) a)
+```
+
+Here `f` and `a` are some closed terms.
+
+Note something important about the `x + y` subterm:
+the order of bindings of its variables has switched as a result of this reduction
+(`x` used to the the outer binder, but now it is the inner binder; so e.g. in de Bruijn notation their indices will have to be switched).
+
+
+Now consider the same reduction in the Routers calculus (again, `f` amd `a` are arbitrary closed terms):
+
+```
+$. ($BB f ($CB ($B + I) I)) a
+```
+
+This matches the B-redex in Fig 5 with `?r0 = .`, `?r1 = .`, `?r = B`
+(and also `?x = f`, `?y = ($CB ($B + I) I)`, `?z = a`).
+
+If we use the rule from the paper, this would reduce to:
+
+```
+$B f ($. ($CB ($B + I) I) a)
+```
+
+But this term is ill-formed (and cannot even be translated to lambda), 
+because the variable bound at the top level by `B` has no corresponding router in the "argument" `($. ($CB ($B + I) I) a)`.
+The way to fix this is to replace the top-level `.` in the argument term with a `C`:
+this is because this variable is destined to the `?y` part of the overall term,
+which is now the left-hand side of the argument.
+This would give us:
+
+```
+$B f ($C ($CB ($B + I) I) a)
+```
+
+This term is now well-formed, but it translates to the following lambda term:
+
+```
+\y . f ((\x . y + x) a)
+```
+
+But this is wrong! We got `y + x` instead of `x + y`!
+This is because of the observation we made earlier: as a result of this reduction,
+the order of the binders switches, but the term matched by `?y` still uses the old order!
+
+We need to modify the term matched by `?y` from `($CB ($B + I) I)` to `($BC ($B + I) I)`
+(in general, when multiple outer and inner binders are present, 
+this transformation requires moving a binder from the middle of a router sequence to the end).
+
+My implementation achieves this by wrapping the `?y` term in an adaptor term that swaps the order of the routers,
+which in this case case would be `($BC ?y I)`.
+
+In lambda notation:
+
+```
+original term:             (\x y . f (x + y)) a
+desired result:            \y . f ((\x .             x + y) a)
+result with adapter:       \y . f ((\x . ((\y'. x + y') y)) a)
+```
+
+As you can see in the last term, the order of bindings (of `x` and `y'`) is the same as the original term,
+so `?y` can be used unchanged inside the adapter.
+
+Unfortunately this increases the size of the reduced term *and* the number of binders,
+although the binders are closer to the leaves, and that's why I thought it would be okay
+(but somehow it isn't).
 
 
 ## TODO
