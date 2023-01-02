@@ -220,3 +220,35 @@ pub fn lambda_compose_many() {
         true,
     )
 }
+
+#[test]
+pub fn lambda_print() {
+    // let source_expr: RecExpr<Lambda> = "($ (lam x ($ ($ + (var x)) (var x))) 5)".parse().unwrap();
+    // let source_expr: RecExpr<Lambda> = "($ (lam x ($ ($ + (var x)) 1)) ($ (lam x ($ ($ + (var x)) 1)) 5))".parse().unwrap();
+    // let source_expr: RecExpr<Lambda> = "($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam x ($ ($ + (var x)) 1)))".parse().unwrap();
+    // let source_expr: RecExpr<Lambda> = "($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam x ($ ($ + (var x)) 1))) (lam x ($ ($ + (var x)) 1)))".parse().unwrap();
+    // let source_expr: RecExpr<Lambda> = "(let compose (lam f (lam g (lam x ($ (var f) ($ (var g) (var x))))))
+    //                                         (let add1 (lam x ($ ($ + (var x)) 1))
+    //                                         ($ ($ (var compose) (var add1)) (var add1))))".parse().unwrap();
+    let source_expr: RecExpr<Lambda> = COMPOSE_20_LAM.parse().unwrap();
+
+    // Create a runner with named::rules and from source_expr:
+    let runner = Runner::default()
+        .with_expr(&source_expr)
+        .with_iter_limit(100)
+        // .with_time_limit(std::time::Duration::from_secs(10))
+        // .with_node_limit(100000)
+        .run(&rules());
+
+    println!("Stop reason: {:?}", runner.stop_reason.unwrap());    
+
+    println!("E-classes: {}", runner.egraph.classes().count());
+    println!("E-nodes: {}", runner.egraph.total_size());        
+
+    // Print the best expression from each eclass in the runner's egraph:
+    let extractor = Extractor::new(&runner.egraph, AstSize);
+    for eclass in runner.egraph.classes() {
+        let expr = extractor.find_best(eclass.id).1;
+        println!("{}: {}", eclass.id, expr);
+    }
+}

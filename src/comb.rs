@@ -3,6 +3,8 @@ use std::iter::{once, repeat};
 
 use crate::named::{var_symbol, Lambda, COMPOSE_20_LAM};
 use fxhash::FxHashMap as HashMap;
+use fxhash::FxHashSet as HashSet;
+
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Router {
@@ -116,10 +118,12 @@ fn route_vars(vars: &[egg::Symbol], routers: &[Router]) -> (Vec<egg::Symbol>, Ve
 pub fn from_lambda_expr(expr: &RecExpr<Lambda>) -> RecExpr<Comb> {
     // Recursive pass: compute list of free variables for every node
     let mut free_vars: Vec<Vec<egg::Symbol>> = vec![vec![]; expr.as_ref().len()];
+    let mut var_set = HashSet::default();
     compute_free_vars(
         expr,
         Id::from(expr.as_ref().len() - 1),
         &mut free_vars,
+        &mut var_set,
         &vec![],
     );
 
@@ -133,7 +137,13 @@ pub fn from_lambda_expr(expr: &RecExpr<Lambda>) -> RecExpr<Comb> {
     for (id, node) in expr.as_ref().iter().enumerate() {
         let new_id = match node {
             Lambda::Num(n) => res.add(Comb::Num(*n)),
-            Lambda::Symbol(s) => res.add(Comb::Symbol(*s)),
+            Lambda::Symbol(s) => {
+                if var_set.contains(s) {
+                    // This is a variable, no need to add (we assume variables and built-in symbols don't overlap)
+                    Id::from(0)
+                } else {
+                    res.add(Comb::Symbol(*s))
+                }},
             Lambda::Var(_) => res.add(Comb::I),
             Lambda::Lambda([_, body]) => mapping[&usize::from(*body)], // skip lambdas, but map them to the translation of their body, in case they are referenced by some application or let
             Lambda::App([l, r]) => add_application(
@@ -168,6 +178,7 @@ fn compute_free_vars(
     expr: &RecExpr<Lambda>,
     id: Id,
     free_vars: &mut Vec<Vec<egg::Symbol>>,
+    var_set: &mut HashSet<egg::Symbol>,
     scope_vars: &Vec<egg::Symbol>,
 ) {
     let node = &expr[id];
@@ -175,10 +186,11 @@ fn compute_free_vars(
         Lambda::Var(var_id) => {
             let var_symbol = var_symbol(expr, *var_id);
             free_vars[usize::from(id)] = vec![var_symbol];
+            var_set.insert(var_symbol);
         }
         Lambda::App([l, r]) => {
-            compute_free_vars(expr, *l, free_vars, scope_vars);
-            compute_free_vars(expr, *r, free_vars, scope_vars);
+            compute_free_vars(expr, *l, free_vars, var_set, scope_vars);
+            compute_free_vars(expr, *r, free_vars, var_set, scope_vars);
             free_vars[usize::from(id)] = scope_vars
                 .iter()
                 .filter(|v| {
@@ -191,7 +203,7 @@ fn compute_free_vars(
             let new_var = var_symbol(expr, *var_id);
             let mut new_scope_vars = scope_vars.clone();
             new_scope_vars.push(new_var);
-            compute_free_vars(expr, *body, free_vars, &new_scope_vars);
+            compute_free_vars(expr, *body, free_vars, var_set, &new_scope_vars);
             let mut my_free_vars = free_vars[usize::from(*body)].clone();
             // Remove `new_var` from my free vars, which must be the last of my body's free vars
             if my_free_vars.last() == Some(&new_var) {
@@ -200,11 +212,11 @@ fn compute_free_vars(
             free_vars[usize::from(id)] = my_free_vars;
         }
         Lambda::Let([var_id, value, body]) => {
-            compute_free_vars(expr, *value, free_vars, scope_vars);
+            compute_free_vars(expr, *value, free_vars, var_set, scope_vars);
             let new_var = var_symbol(expr, *var_id);
             let mut new_scope_vars = scope_vars.clone();
             new_scope_vars.push(new_var);
-            compute_free_vars(expr, *body, free_vars, &new_scope_vars);
+            compute_free_vars(expr, *body, free_vars, var_set, &new_scope_vars);
             free_vars[usize::from(id)] = scope_vars
                 .iter()
                 .filter(|v| {
@@ -509,10 +521,6 @@ impl Applier<Comb, CombAnalysis> for Beta {
         }
         // let input_pat: Pattern<Comb> = "($ ?r0 ($ ?rl ?x ?y) ?z)".parse().unwrap();
         // let before_term = show_match(egraph, subst, &input_pat);
-        // if split_point > rl.len() {
-        //     panic!("split_point > rl.len() in beta rule: split_point = {}, rl.len() = {}, before_term = {:?}",
-        //            split_point, rl.len(), before_term);
-        // }
         let (r1, r) = rl.split_at(split_point);
         assert!(!r.is_empty()); // enforced by the condition `is_redex`
         let (core, r) = (r[0].clone(), &r[1..]); // split off the core router
@@ -524,25 +532,31 @@ impl Applier<Comb, CombAnalysis> for Beta {
         let rp_new_sym = Comb::make_routers(&rp_new);
         subst.insert(self.rp_new, egraph.add(rp_new_sym));
         if let Some((r1_new, m1)) = r1_new {
+            // if r1_new.len() > m1 {
+            //     return vec![]; // adapter needed
+            // }
             let r1_new_sym = Comb::make_routers(&r1_new);
             subst.insert(self.r1_new, egraph.add(r1_new_sym));
             let adapter_id = Beta::add_adapter(egraph, subst[self.x], m1, r1_new.len() - m1);
             subst.insert(self.x_new, adapter_id);
         }
         if let Some((r2_new, m2)) = r2_new {
+            if r2_new.len() > m2 {
+                return vec![]; // inserting adapters in this position causes the e-graphs to grow infinitely; I don't really understand why
+            }
             let r2_new_sym = Comb::make_routers(&r2_new);
-            subst.insert(self.r2_new, egraph.add(r2_new_sym));
+            subst.insert(self.r2_new, egraph.add(r2_new_sym));            
             let adapter_id = Beta::add_adapter(egraph, subst[self.y], m2, r2_new.len() - m2);
             subst.insert(self.y_new, adapter_id);
         }
-        pat.apply_one(egraph, eclass, &subst, searcher_ast, rule_name)
+        let  ids = pat.apply_one(egraph, eclass, &subst, searcher_ast, rule_name);
         // if !ids.is_empty() {
         //     // println!("BEFORE: {}", to_lambda_expr(&before_term.parse().unwrap()));
         //     // println!("AFTER: {}", to_lambda_expr(&show_match(egraph, &subst, pat).parse().unwrap()));
         //     println!("BEFORE: {}", before_term);
         //     println!("AFTER: {}", show_match(egraph, &subst, pat));
-
         // }
+        ids
     }
 }
 
@@ -1060,3 +1074,39 @@ pub fn compose_20_from_lambda() {
         true,
     )
 }
+
+#[test]
+pub fn comb_print() {
+    // let source_expr_lambda: RecExpr<Lambda> = "($ (lam x ($ ($ + (var x)) (var x))) 5)".parse().unwrap();
+    // let source_expr_lambda: RecExpr<Lambda> = "($ (lam x ($ ($ + (var x)) 1)) ($ (lam x ($ ($ + (var x)) 1)) 5))".parse().unwrap();
+    // let source_expr_lambda: RecExpr<Lambda> = "($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam x ($ ($ + (var x)) 1)))".parse().unwrap();
+    // let source_expr_lambda: RecExpr<Lambda> = "($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam x (var x))) (lam x (var x)))".parse().unwrap();
+    // let source_expr_lambda: RecExpr<Lambda> = "($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam x ($ ($ + (var x)) 1))) (lam x ($ ($ + (var x)) 1)))".parse().unwrap();    
+    // let source_expr_lambda: RecExpr<Lambda> = "(let compose (lam f (lam g (lam x ($ (var f) ($ (var g) (var x))))))
+    //                                             (let add1 (lam x ($ ($ + (var x)) 1))
+    //                                             ($ ($ (var compose) (var add1)) (var add1))))".parse().unwrap();
+    let source_expr_lambda: RecExpr<Lambda> = COMPOSE_20_LAM.parse().unwrap();
+    let source_expr = from_lambda_expr(&source_expr_lambda);
+    println!("Source: {}", source_expr);
+
+    // Create a runner with named::rules and from source_expr:
+    let runner = Runner::default()
+        .with_expr(&source_expr)
+        .with_iter_limit(100)
+        // .with_time_limit(std::time::Duration::from_secs(10))
+        // .with_node_limit(100)
+        .run(&rules());
+
+    println!("Stop reason: {:?}", runner.stop_reason.unwrap());
+
+    println!("E-classes: {}", runner.egraph.classes().count());
+    println!("E-nodes: {}", runner.egraph.total_size());    
+
+    // Print the best expression from each eclass in the runner's egraph:
+    let extractor = Extractor::new(&runner.egraph, AstSize);
+    for eclass in runner.egraph.classes() {
+        let expr = extractor.find_best(eclass.id).1;
+        println!("{}: {}", eclass.id, expr);
+    }
+}
+
