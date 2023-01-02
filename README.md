@@ -1,7 +1,9 @@
 ## Notes
 
-This is an egg implication of the /Routers/ combinator calculus
-described in Liang, Jordan, Klein. "Learning Programs: A Hierarchical Bayesian Approach. ICML 2010".
+This is an egg implication of the *Routers* combinator calculus
+described in [Liang, Jordan, Klein. "Learning Programs: A Hierarchical Bayesian Approach. ICML 2010"](https://people.eecs.berkeley.edu/~jordan/papers/liang-jordan-klein-icml10.pdf).
+
+Figures 1 and 2 in the paper give a good idea of the calculus, and Figure 5 defined beta-reduction generally.
 
 This calculus has the following properties that make it interesting for e-graphs and program synthesis:
 
