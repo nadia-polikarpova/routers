@@ -532,6 +532,7 @@ impl Applier<Comb, CombAnalysis> for Beta {
         let rp_new_sym = Comb::make_routers(&rp_new);
         subst.insert(self.rp_new, egraph.add(rp_new_sym));
         if let Some((r1_new, m1)) = r1_new {
+            // HERE: uncomment this to abort rewrites that require inserting adapters
             // if r1_new.len() > m1 {
             //     return vec![]; // adapter needed
             // }
@@ -541,9 +542,12 @@ impl Applier<Comb, CombAnalysis> for Beta {
             subst.insert(self.x_new, adapter_id);
         }
         if let Some((r2_new, m2)) = r2_new {
-            if r2_new.len() > m2 {
-                return vec![]; // inserting adapters in this position causes the e-graphs to grow infinitely; I don't really understand why
-            }
+            // HERE: uncomment this to abort rewrites that require inserting adapters
+            // Inserting adapters in this position causes the e-graphs to grow infinitely!!!
+            // Uncommenting just this block will make all tests pass
+            // if r2_new.len() > m2 {
+            //     return vec![];
+            // }
             let r2_new_sym = Comb::make_routers(&r2_new);
             subst.insert(self.r2_new, egraph.add(r2_new_sym));
             let adapter_id = Beta::add_adapter(egraph, subst[self.y], m2, r2_new.len() - m2);
@@ -551,8 +555,6 @@ impl Applier<Comb, CombAnalysis> for Beta {
         }
         let ids = pat.apply_one(egraph, eclass, &subst, searcher_ast, rule_name);
         // if !ids.is_empty() {
-        //     // println!("BEFORE: {}", to_lambda_expr(&before_term.parse().unwrap()));
-        //     // println!("AFTER: {}", to_lambda_expr(&show_match(egraph, &subst, pat).parse().unwrap()));
         //     println!("BEFORE: {}", before_term);
         //     println!("AFTER: {}", show_match(egraph, &subst, pat));
         // }
@@ -831,6 +833,7 @@ impl Beta {
     }
 }
 
+/// String representation of the smallest expression from a specific match of a pattern.
 fn show_match(egraph: &EGraph, subst: &Subst, pattern: &Pattern<Comb>) -> String {
     let extractor = Extractor::new(&egraph, AstSize);
     let mut res = format!("{}", pattern);
@@ -865,16 +868,6 @@ static COMPOSE_20_COMB: &str = "($ . ($ C
                                                                             ($ CS ($ CB I I) I)))))))))))))))))))
             ($ C ($ B + I) 1))
             ($ CBB I ($ CB I I)))";
-
-static COMPOSE_8_COMB: &str = "($ . ($ C 
-        ($ SS ($ CB I I)
-            ($ SS ($ CB I I)
-                ($ SS ($ CB I I)
-                    ($ SS ($ CB I I)
-                        ($ SS ($ CB I I)
-            ($ SS ($ CB I I) ($ CS ($ CB I I) I)))))))
-        ($ C ($ B + I) 1))
-        ($ CBB I ($ CB I I)))";
 
 #[test]
 pub fn conversion_inc() {
@@ -1004,44 +997,8 @@ egg::test_fn! {
     "3",
 }
 
-egg::test_fn! {
-    compose_2, rules(),
-    "($ . ($ . ($ CBB I ($ CB I I)) ($ C ($ B + I) 1))
-        ($ C ($ B + I) 1))" // compose inc inc
-    =>
-    "($ C ($ B + I) 2)", // x -> x + 2
-}
-
 #[test]
-pub fn compose_8() {
-    let source: RecExpr<Comb> = COMPOSE_8_COMB.parse().unwrap();
-    egg::test::test_runner(
-        "compose_8",
-        None,
-        &(rules()),
-        source,
-        &["($ C ($ B + I) 8)".parse().unwrap()],
-        None,
-        true,
-    )
-}
-
-#[test]
-pub fn compose_20() {
-    let source: RecExpr<Comb> = COMPOSE_20_COMB.parse().unwrap();
-    egg::test::test_runner(
-        "compose_20",
-        None,
-        &(rules()),
-        source,
-        &["($ C ($ B + I) 20)".parse().unwrap()],
-        None,
-        true,
-    )
-}
-
-#[test]
-pub fn compose_2_from_lambda() {
+pub fn compose_2() {
     let lambda_expr: RecExpr<Lambda> =
         "(let compose (lam f (lam g (lam x ($ (var f) ($ (var g) (var x))))))
                                             (let add1 (lam x ($ ($ + (var x)) 1))
@@ -1050,7 +1007,7 @@ pub fn compose_2_from_lambda() {
             .unwrap();
     let source = from_lambda_expr(&lambda_expr);
     egg::test::test_runner(
-        "compose_2_from_lambda",
+        "compose_2",
         None,
         &(rules()),
         source,
@@ -1061,11 +1018,11 @@ pub fn compose_2_from_lambda() {
 }
 
 #[test]
-pub fn compose_20_from_lambda() {
+pub fn compose_20() {
     let lambda_expr: RecExpr<Lambda> = COMPOSE_20_LAM.parse().unwrap();
     let source = from_lambda_expr(&lambda_expr);
     egg::test::test_runner(
-        "compose_20_from_lambda",
+        "compose_20",
         None,
         &(rules()),
         source,
@@ -1090,25 +1047,17 @@ pub fn compose_20_id() {
     )
 }
 
+/// This is the simplest example on which equality saturation explodes:
+/// compose id id, aka (\f g x -> f (g x)) (\x -> x) (\x -> x)
 #[test]
-pub fn comb_print() {
-    // let source_expr_lambda: RecExpr<Lambda> = "($ (lam x ($ ($ + (var x)) (var x))) 5)".parse().unwrap();
-    // let source_expr_lambda: RecExpr<Lambda> = "($ (lam x ($ ($ + (var x)) 1)) ($ (lam x ($ ($ + (var x)) 1)) 5))".parse().unwrap();
-    // let source_expr_lambda: RecExpr<Lambda> = "($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam x ($ ($ + (var x)) 1)))".parse().unwrap();
-    // let source_expr_lambda: RecExpr<Lambda> = "($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam x (var x))) (lam x (var x)))".parse().unwrap();
-    // let source_expr_lambda: RecExpr<Lambda> = "($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam x ($ ($ + (var x)) 1))) (lam x ($ ($ + (var x)) 1)))".parse().unwrap();
-    // let source_expr_lambda: RecExpr<Lambda> = "(let compose (lam f (lam g (lam x ($ (var f) ($ (var g) (var x))))))
-    //                                             (let add1 (lam x ($ ($ + (var x)) 1))
-    //                                             ($ ($ (var compose) (var add1)) (var add1))))".parse().unwrap();
-    let source_expr_lambda: RecExpr<Lambda> = COMPOSE_20_ID.parse().unwrap();
+pub fn explosion() {
+    let source_expr_lambda: RecExpr<Lambda> = "($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam x (var x))) (lam x (var x)))".parse().unwrap();
     let source_expr = from_lambda_expr(&source_expr_lambda);
     println!("Source: {}", source_expr);
 
-    // Create a runner with named::rules and from source_expr:
     let runner = Runner::default()
         .with_expr(&source_expr)
         .with_iter_limit(100)
-        // .with_time_limit(std::time::Duration::from_secs(10))
         // .with_node_limit(100)
         .run(&rules());
 
