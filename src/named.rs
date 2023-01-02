@@ -199,6 +199,30 @@ pub static COMPOSE_20_LAM: &str =
         ($ ($ (var compose) (var add1))
                             (var add1))))))))))))))))))))))";
 
+pub static COMPOSE_20_ID: &str =
+    "(let compose (lam f (lam g (lam x ($ (var f) ($ (var g) (var x))))))
+    (let id (lam x (var x))
+    ($ ($ (var compose) (var id))
+    ($ ($ (var compose) (var id))
+    ($ ($ (var compose) (var id))
+    ($ ($ (var compose) (var id))
+    ($ ($ (var compose) (var id))
+    ($ ($ (var compose) (var id))
+    ($ ($ (var compose) (var id))
+    ($ ($ (var compose) (var id))
+    ($ ($ (var compose) (var id))
+    ($ ($ (var compose) (var id))
+    ($ ($ (var compose) (var id))
+    ($ ($ (var compose) (var id))
+    ($ ($ (var compose) (var id))
+    ($ ($ (var compose) (var id))
+    ($ ($ (var compose) (var id))
+    ($ ($ (var compose) (var id))
+    ($ ($ (var compose) (var id))
+    ($ ($ (var compose) (var id))
+    ($ ($ (var compose) (var id))
+                        (var id))))))))))))))))))))))";
+
 egg::test_fn! {
   lambda_under, rules(),
   "(lam x ($ ($ + 4)
@@ -216,6 +240,20 @@ pub fn lambda_compose_many() {
         &(rules()),
         source,
         &["(lam ?x ($ ($ + (var ?x)) 20))".parse().unwrap()],
+        None,
+        true,
+    )
+}
+
+#[test]
+pub fn lambda_compose_many_id() {
+    let source: RecExpr<Lambda> = COMPOSE_20_ID.parse().unwrap();
+    egg::test::test_runner(
+        "compose_20_id",
+        None,
+        &(rules()),
+        source,
+        &["(lam ?x (var ?x))".parse().unwrap()],
         None,
         true,
     )
@@ -240,10 +278,10 @@ pub fn lambda_print() {
         // .with_node_limit(100000)
         .run(&rules());
 
-    println!("Stop reason: {:?}", runner.stop_reason.unwrap());    
+    println!("Stop reason: {:?}", runner.stop_reason.unwrap());
 
     println!("E-classes: {}", runner.egraph.classes().count());
-    println!("E-nodes: {}", runner.egraph.total_size());        
+    println!("E-nodes: {}", runner.egraph.total_size());
 
     // Print the best expression from each eclass in the runner's egraph:
     let extractor = Extractor::new(&runner.egraph, AstSize);

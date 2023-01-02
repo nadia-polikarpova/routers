@@ -1,10 +1,9 @@
 use egg::{rewrite as rw, *};
 use std::iter::{once, repeat};
 
-use crate::named::{var_symbol, Lambda, COMPOSE_20_LAM};
+use crate::named::{var_symbol, Lambda, COMPOSE_20_ID, COMPOSE_20_LAM};
 use fxhash::FxHashMap as HashMap;
 use fxhash::FxHashSet as HashSet;
-
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Router {
@@ -143,7 +142,8 @@ pub fn from_lambda_expr(expr: &RecExpr<Lambda>) -> RecExpr<Comb> {
                     Id::from(0)
                 } else {
                     res.add(Comb::Symbol(*s))
-                }},
+                }
+            }
             Lambda::Var(_) => res.add(Comb::I),
             Lambda::Lambda([_, body]) => mapping[&usize::from(*body)], // skip lambdas, but map them to the translation of their body, in case they are referenced by some application or let
             Lambda::App([l, r]) => add_application(
@@ -288,7 +288,7 @@ pub fn to_lambda_expr(expr: &RecExpr<Comb>) -> RecExpr<Lambda> {
                 if vars.len() == 1 {
                     // This is a variable:
                     let s_id = res.add(Lambda::Symbol(vars[0]));
-                    res.add(Lambda::Var(s_id))    
+                    res.add(Lambda::Var(s_id))
                 } else {
                     // This is an identity function:
                     let s_id = res.add(Lambda::Symbol(egg::Symbol::from("x")));
@@ -545,11 +545,11 @@ impl Applier<Comb, CombAnalysis> for Beta {
                 return vec![]; // inserting adapters in this position causes the e-graphs to grow infinitely; I don't really understand why
             }
             let r2_new_sym = Comb::make_routers(&r2_new);
-            subst.insert(self.r2_new, egraph.add(r2_new_sym));            
+            subst.insert(self.r2_new, egraph.add(r2_new_sym));
             let adapter_id = Beta::add_adapter(egraph, subst[self.y], m2, r2_new.len() - m2);
             subst.insert(self.y_new, adapter_id);
         }
-        let  ids = pat.apply_one(egraph, eclass, &subst, searcher_ast, rule_name);
+        let ids = pat.apply_one(egraph, eclass, &subst, searcher_ast, rule_name);
         // if !ids.is_empty() {
         //     // println!("BEFORE: {}", to_lambda_expr(&before_term.parse().unwrap()));
         //     // println!("AFTER: {}", to_lambda_expr(&show_match(egraph, &subst, pat).parse().unwrap()));
@@ -817,12 +817,12 @@ impl Beta {
         for i in m..m + n {
             // Create a router with `i` Cs, a B, and a C:
             let routers = Comb::make_routers(
-                    &repeat(Router::C)
-                        .take(i)
-                        .chain(once(Router::B))
-                        .chain(once(Router::C))
-                        .collect::<Vec<_>>(),
-                );
+                &repeat(Router::C)
+                    .take(i)
+                    .chain(once(Router::B))
+                    .chain(once(Router::C))
+                    .collect::<Vec<_>>(),
+            );
             let s_id = egraph.add(routers);
             // Create an application of the previous node to I with routers
             cur_id = egraph.add(Comb::App([s_id, cur_id, i_id]));
@@ -1076,16 +1076,31 @@ pub fn compose_20_from_lambda() {
 }
 
 #[test]
+pub fn compose_20_id() {
+    let lambda_expr: RecExpr<Lambda> = COMPOSE_20_ID.parse().unwrap();
+    let source = from_lambda_expr(&lambda_expr);
+    egg::test::test_runner(
+        "compose_20_id",
+        None,
+        &(rules()),
+        source,
+        &["I".parse().unwrap()],
+        None,
+        true,
+    )
+}
+
+#[test]
 pub fn comb_print() {
     // let source_expr_lambda: RecExpr<Lambda> = "($ (lam x ($ ($ + (var x)) (var x))) 5)".parse().unwrap();
     // let source_expr_lambda: RecExpr<Lambda> = "($ (lam x ($ ($ + (var x)) 1)) ($ (lam x ($ ($ + (var x)) 1)) 5))".parse().unwrap();
     // let source_expr_lambda: RecExpr<Lambda> = "($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam x ($ ($ + (var x)) 1)))".parse().unwrap();
     // let source_expr_lambda: RecExpr<Lambda> = "($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam x (var x))) (lam x (var x)))".parse().unwrap();
-    // let source_expr_lambda: RecExpr<Lambda> = "($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam x ($ ($ + (var x)) 1))) (lam x ($ ($ + (var x)) 1)))".parse().unwrap();    
+    // let source_expr_lambda: RecExpr<Lambda> = "($ ($ (lam f (lam g (lam x ($ (var f) ($ (var g) (var x)))))) (lam x ($ ($ + (var x)) 1))) (lam x ($ ($ + (var x)) 1)))".parse().unwrap();
     // let source_expr_lambda: RecExpr<Lambda> = "(let compose (lam f (lam g (lam x ($ (var f) ($ (var g) (var x))))))
     //                                             (let add1 (lam x ($ ($ + (var x)) 1))
     //                                             ($ ($ (var compose) (var add1)) (var add1))))".parse().unwrap();
-    let source_expr_lambda: RecExpr<Lambda> = COMPOSE_20_LAM.parse().unwrap();
+    let source_expr_lambda: RecExpr<Lambda> = COMPOSE_20_ID.parse().unwrap();
     let source_expr = from_lambda_expr(&source_expr_lambda);
     println!("Source: {}", source_expr);
 
@@ -1100,7 +1115,7 @@ pub fn comb_print() {
     println!("Stop reason: {:?}", runner.stop_reason.unwrap());
 
     println!("E-classes: {}", runner.egraph.classes().count());
-    println!("E-nodes: {}", runner.egraph.total_size());    
+    println!("E-nodes: {}", runner.egraph.total_size());
 
     // Print the best expression from each eclass in the runner's egraph:
     let extractor = Extractor::new(&runner.egraph, AstSize);
@@ -1109,4 +1124,3 @@ pub fn comb_print() {
         println!("{}: {}", eclass.id, expr);
     }
 }
-
