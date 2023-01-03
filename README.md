@@ -101,6 +101,51 @@ Unfortunately this increases the size of the reduced term *and* the number of bi
 although the binders are closer to the leaves, and that's why I thought it would be okay
 (but somehow it isn't).
 
+## Motivating Example
+
+A potentially interesting motivating example for partial evaluation that I found in the paper "Practical Normalization by Evaluation for EDSLs".
+This example is about partial evaluation of a branching program over arrays, where arrays are defined like so (in Haskell notation):
+
+```
+data Array a = Array
+  { len :: Int
+  , (!) :: Int -> a // infix function for accessing element at index
+  }
+```
+
+Original program of type `Either Int Int -> Array Int -> Array Int`:
+
+```
+\scr arr ->
+  map (+ 1) 
+    (case scr of
+      Left x -> map (+ x) arr
+      Right _ -> arr)
+```
+
+Their technique evaluates this to:
+
+```
+\scr arr ->
+  Array (len arr) (\i ->
+    case scr of
+      Left x -> (arr ! i) + x + 1
+      Right _ -> (arr ! i) + 1
+  )
+```
+
+I.e. it pushes the match inwards. This is nice from the standpoint of not having to allocate an intermediate array in the `Left` branch. But it's not so nice from the standpoint of having to match `len arr` times instead of just once. An alternative solution here would be:
+
+```
+\scr arr ->
+  case scr of
+    Left x -> Array (len arr) (\i -> (arr ! i) + x + 1)
+    Right _ -> Array (len arr) (\i -> (arr ! i) + 1)
+```
+
+I.e. to push the match outwards. This is a bit longer, but it also avoids unnecessary allocation *and* only matches once.
+
+I suspect that this choice cannot be easily made via NbE, but could be done with an e-graph, if we optimize for some resource consumption metric.
 
 ## TODO
 
