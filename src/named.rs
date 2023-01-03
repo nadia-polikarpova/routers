@@ -7,7 +7,6 @@ define_language! {
     pub enum Lambda {
         Num(i32),
         "var" = Var(Id),
-        // "+" = Plus,
         "$" = App([Id; 2]),
         "lam" = Lambda([Id; 2]),
         "let" = Let([Id; 3]),
@@ -236,7 +235,7 @@ pub fn lambda_compose_many() {
     let source: RecExpr<Lambda> = COMPOSE_20_LAM.parse().unwrap();
     egg::test::test_runner(
         "compose_20",
-        None,
+        Some(Runner::default().with_iter_limit(100)),
         &(rules()),
         source,
         &["(lam ?x ($ ($ + (var ?x)) 20))".parse().unwrap()],
@@ -273,7 +272,7 @@ pub fn lambda_no_explosion() {
     println!("E-classes: {}", runner.egraph.classes().count());
     println!("E-nodes: {}", runner.egraph.total_size());
 
-    // Print the best expression from each eclass in the runner's egraph:
+    // Print the best expression from each eclass:
     let extractor = Extractor::new(&runner.egraph, AstSize);
     for eclass in runner.egraph.classes() {
         let expr = extractor.find_best(eclass.id).1;

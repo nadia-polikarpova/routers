@@ -13,7 +13,7 @@ pub enum Router {
 }
 
 impl Router {
-    // Does this router route the left child?
+    // Does this router route to the left child?
     pub fn routes_left(&self) -> bool {
         match self {
             Router::C => true,
@@ -22,7 +22,7 @@ impl Router {
         }
     }
 
-    // Does this router route the right child?
+    // Does this router route to the right child?
     pub fn routes_right(&self) -> bool {
         match self {
             Router::C => false,
@@ -93,7 +93,7 @@ impl Comb {
 
 /// Partition a list of variables into a left and right lists accoridng to the routers
 fn route_vars(vars: &[egg::Symbol], routers: &[Router]) -> (Vec<egg::Symbol>, Vec<egg::Symbol>) {
-    assert!(routers.len() >= vars.len()); // all variables must be routed
+    assert!(routers.len() == vars.len()); // all variables must be routed
     let mut left_vars = vec![];
     let mut right_vars = vec![];
     for (router, var) in routers.iter().zip(vars.iter()) {
@@ -173,6 +173,7 @@ pub fn from_lambda_expr(expr: &RecExpr<Lambda>) -> RecExpr<Comb> {
 /// Helper function for converting a lambda expression into a combinator expression:
 /// recursively process `expr` at `id` to compute `free_vars`,
 /// which maps each node to its free variables in the order in which they are bound.
+/// It will also compute an auxiliary set `var_set` of all symbols used as variables.
 /// `scoped_vars` is the list of variables that are already bound in the current context, passed top-down.
 fn compute_free_vars(
     expr: &RecExpr<Lambda>,
@@ -191,6 +192,7 @@ fn compute_free_vars(
         Lambda::App([l, r]) => {
             compute_free_vars(expr, *l, free_vars, var_set, scope_vars);
             compute_free_vars(expr, *r, free_vars, var_set, scope_vars);
+            // We need to do this by filtering scoped_vars, because we want the variables to be in the right order
             free_vars[usize::from(id)] = scope_vars
                 .iter()
                 .filter(|v| {
@@ -318,31 +320,31 @@ pub fn to_lambda_expr(expr: &RecExpr<Comb>) -> RecExpr<Lambda> {
 /// recursively process `expr` at `id` to compute `var_mapping`,
 /// which maps each I-node to the variable it represents and each application to the variables it binds;
 /// `total_vars` is the number of variables that have been bound so far and is used to generate fresh variable names;
-/// `vars` is the list of variables that are already bound in the current context.
+/// `scope_vars` is the list of variables that are already bound in the current context.
 fn compute_vars(
     expr: &RecExpr<Comb>,
     id: Id,
     var_mapping: &mut HashMap<Id, Vec<egg::Symbol>>,
     total_vars: &mut usize,
-    vars: &Vec<egg::Symbol>,
+    scope_vars: &Vec<egg::Symbol>,
 ) {
     let node = &expr[id];
     match node {
         Comb::I => {
-            assert!(vars.len() == 1 || vars.len() == 0); // I-nodes can represent either a variable or an identity function
-            var_mapping.insert(id, vars.clone());
+            assert!(scope_vars.len() == 1 || scope_vars.len() == 0); // I-nodes can represent either a variable or an identity function
+            var_mapping.insert(id, scope_vars.clone());
         }
         Comb::App([rts, l, r]) => {
             let routers = expr[*rts].get_routers().unwrap(); // first child of app is always a router node
-            assert!(routers.len() >= vars.len()); // at least we have routers for all variables that are already bound!
+            assert!(routers.len() >= scope_vars.len()); // at least we have routers for all variables that are already bound!
             let mut new_vars = vec![]; // newly bound variables
-            for _ in vars.len()..routers.len() {
+            for _ in scope_vars.len()..routers.len() {
                 // create a new variable for every extra router
                 let var = egg::Symbol::from(format!("x{}", total_vars));
                 *total_vars += 1;
                 new_vars.push(var);
             }
-            let all_vars = [&vars[..], &new_vars[..]].concat();
+            let all_vars = [&scope_vars[..], &new_vars[..]].concat();
             var_mapping.insert(id, new_vars); // remember which variables are bound here (if new_vars is empty, this node will be treated as application, and otherwise as lambda)
             let (l_vars, r_vars) = route_vars(&all_vars, &routers);
             compute_vars(expr, *l, var_mapping, total_vars, &l_vars);
@@ -424,20 +426,6 @@ fn no_lefts(rts: Var) -> impl Fn(&mut EGraph, Id, &Subst) -> bool {
     }
 }
 
-fn ends_with_b(rts: Var) -> impl Fn(&mut EGraph, Id, &Subst) -> bool {
-    move |egraph, _, subst| {
-        egraph[subst[rts]]
-            .data
-            .routers
-            .as_ref()
-            .unwrap()
-            .iter()
-            .last()
-            .map(|r| r == &Router::B)
-            .unwrap_or(false)
-    }
-}
-
 /// Is an application whose parent's routers are `parent_rts` and whose left child's routers are `child_rts` a beta-redex?
 /// Yes if the child has more routers than parent has pointing to the left.
 fn is_redex(parent_rts: Var, child_rts: Var) -> impl Fn(&mut EGraph, Id, &Subst) -> bool {
@@ -463,27 +451,27 @@ fn is_redex(parent_rts: Var, child_rts: Var) -> impl Fn(&mut EGraph, Id, &Subst)
 
 fn rules() -> Vec<Rewrite<Comb, CombAnalysis>> {
     vec![
+        // Note: these associativity rules only work for terms with 0 or 1 variable; generic associativity rules are not implemented yet
         rw!("add-assoc-0"; "($ . ($ . + ($ . ($ . + ?a) ?b)) ?c)" => "($ . ($ . + ?a) ($ . ($ . + ?b) ?c))"),
         rw!("add-assoc-1"; "($ C ($ B + ($ C ($ B + ?a) ?b)) ?c)" =>
                            "($ C ($ B + ?a) ($ . ($ . + ?b) ?c))"),
         rw!("id"; "($ ?r I ?x)" => "?x" if no_lefts(var("?r"))),
-        // rw!("eta"; "($ ?r ?x I)" => "?x" if ends_with_b(var("?r"))),
         rw!("beta";
         "($ ?r0 ($ ?rl ?x ?y) ?z)" =>
         { Beta {
-            r0: var("?r0"),
-            rl: var("?rl"),
+            r0: var("?r0"), // old parent's routers
+            rl: var("?rl"), // old left child's routers (in the paper this would be called e.g. r1Br)
             x: var("?x"),
             y: var("?y"),
-            rp_new: var("?rp_new"),
-            r1_new: var("?r1_new"),
-            r2_new: var("?r2_new"),
-            x_new: var("?x_new"),
-            y_new: var("?y_new"),
-            beta_b: "($ ?rp_new ?x ($ ?r2_new ?y_new ?z))".parse().unwrap(),
-            beta_c: "($ ?rp_new ($ ?r1_new ?x_new ?z) ?y)".parse().unwrap(),
-            beta_s: "($ ?rp_new ($ ?r1_new ?x_new ?z) ($ ?r2_new ?y_new ?z))".parse().unwrap(),
-        }} if is_redex(var("?r0"), var("?rl"))),
+            rp_new: var("?rp_new"), // new routers for the parent (called r0'r in the paper)
+            r1_new: var("?r1_new"), // new routers for the left child (called r1' in the paper)
+            r2_new: var("?r2_new"), // new routers for the right child; note that, UNLIKE THE PAPER, I use r2_new instead of r1_new for the B rule! 
+            x_new: var("?x_new"), // x possibly wrapped into an adapter
+            y_new: var("?y_new"), // y possibly wrapped into an adapter
+            beta_b: "($ ?rp_new ?x ($ ?r2_new ?y_new ?z))".parse().unwrap(), // RHS of the beta rule for B
+            beta_c: "($ ?rp_new ($ ?r1_new ?x_new ?z) ?y)".parse().unwrap(), // RHS of the beta rule for C
+            beta_s: "($ ?rp_new ($ ?r1_new ?x_new ?z) ($ ?r2_new ?y_new ?z))".parse().unwrap(), // RHS of the beta rule for S
+        }} if is_redex(var("?r0"), var("?rl"))), // this condition can also be removed (applier returns an empty vector if it is not satisfied)
     ]
 }
 
@@ -514,16 +502,17 @@ impl Applier<Comb, CombAnalysis> for Beta {
         // The names of various sequences of routers (r0, r1, etc) correspond to those used in Fig 5 in the paper.
         let r0 = egraph[subst[self.r0]].data.routers.as_ref().unwrap();
         let split_point = r0.iter().filter(|r| r.routes_left()).count();
-        // split rl into r1 and r at the split point:
+        // split rl into r1 and Rr at the split point:
         let rl = egraph[subst[self.rl]].data.routers.as_ref().unwrap();
         if rl.len() <= split_point {
             return vec![]; // not a redex
         }
+        // This is here for debugging purposes only:
         // let input_pat: Pattern<Comb> = "($ ?r0 ($ ?rl ?x ?y) ?z)".parse().unwrap();
         // let before_term = show_match(egraph, subst, &input_pat);
-        let (r1, r) = rl.split_at(split_point);
-        assert!(!r.is_empty()); // enforced by the condition `is_redex`
-        let (core, r) = (r[0].clone(), &r[1..]); // split off the core router
+        let (r1, core_r) = rl.split_at(split_point);
+        assert!(!core_r.is_empty()); // enforced by the condition `is_redex`
+        let (core, r) = (core_r[0].clone(), &core_r[1..]); // split off the core router
         let (mut rp_new, r1_new, r2_new, pat) = self.new_routers(&core, r0, r1, r);
         rp_new.extend(r.iter().cloned()); // r is always added to the end of the parent routers
         assert!(r0.len() <= rp_new.len());
@@ -563,6 +552,12 @@ impl Applier<Comb, CombAnalysis> for Beta {
 }
 
 impl Beta {
+    /// This is the main workhorse of the beta reduction that computes the new routers on the RHS of the beta rule.
+    /// It returns:
+    /// - the new parent routers (rp_new)
+    /// - the new routers for the left and right children, if they exist (e.g. B-rule returns only right, etc.)
+    /// - together with the new child routers, it returns the number `m` of *outer binders*, i.e. those binders that must not be changed by the adapter
+    /// - the RHS of the beta rule
     fn new_routers(
         &self,
         core: &Router,
@@ -570,11 +565,12 @@ impl Beta {
         r1: &[Router],
         r: &[Router],
     ) -> (
-        Vec<Router>,
-        Option<(Vec<Router>, usize)>,
-        Option<(Vec<Router>, usize)>,
-        &Pattern<Comb>,
+        Routers, // rp_new
+        Option<(Routers, usize)>, // r1_new, m1
+        Option<(Routers, usize)>, // r2_new, m2
+        &Pattern<Comb>, // the RHS of the beta
     ) {
+        // This should be implemented as a big lookup table, but whatevs...
         match core {
             Router::B => self.new_routers_b(r0, r1, r),
             Router::C => self.new_routers_c(r0, r1, r),
@@ -588,9 +584,9 @@ impl Beta {
         r1: &[Router],
         r: &[Router],
     ) -> (
-        Vec<Router>,
-        Option<(Vec<Router>, usize)>,
-        Option<(Vec<Router>, usize)>,
+        Routers,
+        Option<(Routers, usize)>,
+        Option<(Routers, usize)>,
         &Pattern<Comb>,
     ) {
         let mut r0_new = vec![];
@@ -661,9 +657,9 @@ impl Beta {
         r1: &[Router],
         r: &[Router],
     ) -> (
-        Vec<Router>,
-        Option<(Vec<Router>, usize)>,
-        Option<(Vec<Router>, usize)>,
+        Routers,
+        Option<(Routers, usize)>,
+        Option<(Routers, usize)>,
         &Pattern<Comb>,
     ) {
         let mut r0_new = vec![];
@@ -735,9 +731,9 @@ impl Beta {
         r1: &[Router],
         r: &[Router],
     ) -> (
-        Vec<Router>,
-        Option<(Vec<Router>, usize)>,
-        Option<(Vec<Router>, usize)>,
+        Routers,
+        Option<(Routers, usize)>,
+        Option<(Routers, usize)>,
         &Pattern<Comb>,
     ) {
         let mut r0_new = vec![];
@@ -813,6 +809,9 @@ impl Beta {
         (r0_new, Some((r1_new, m1)), Some((r2_new, m2)), &self.beta_s)
     }
 
+    /// Create an adapter terms that wraps `adaptee`, 
+    /// which has `m` outer binders (before the variable being reduced) and `n` inner binders (after).
+    /// The adapter term will "move" the variable being reduced to the end (after the `n` inner binders).
     pub fn add_adapter(egraph: &mut EGraph, adaptee: Id, m: usize, n: usize) -> Id {
         let mut cur_id = adaptee;
         let i_id = egraph.add(Comb::I);
@@ -1023,7 +1022,7 @@ pub fn compose_20() {
     let source = from_lambda_expr(&lambda_expr);
     egg::test::test_runner(
         "compose_20",
-        None,
+        Some(Runner::default().with_iter_limit(100)),
         &(rules()),
         source,
         &["($ C ($ B + I) 20)".parse().unwrap()],
